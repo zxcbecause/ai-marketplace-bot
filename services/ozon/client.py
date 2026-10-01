@@ -7,6 +7,7 @@ Excel (см. utils/ozon_filler.py) — поэтому характеристик
 для Excel через OzonExcelFiller.get_chars_prompt(), можно напрямую
 сопоставить с ID атрибутов и отправить через API, без отдельного промпта.
 """
+import os
 import asyncio
 import logging
 import re
@@ -239,7 +240,7 @@ async def unarchive_products(product_ids: list[int]) -> dict:
     return await asyncio.to_thread(_call)
 
 
-WAREHOUSE_ID = 1020005000710406  # магазина — единственный склад продавца
+WAREHOUSE_ID = int(os.getenv("OZON_WAREHOUSE_ID", "0"))  # ID склада продавца на Ozon (из .env)
 
 
 async def update_stocks(offer_id: str, stock: int) -> dict:

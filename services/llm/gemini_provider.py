@@ -29,8 +29,39 @@ def _today() -> str:
     return (datetime.datetime.utcnow() - datetime.timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
+_discovered: list[str] = []
+
+
+def model_list(client=None) -> list[str]:
+    """Модели Gemini, доступные этому ключу: сначала привычные (_MODELS), потом остальные «flash»
+    от новых к старым. Список у Google меняется — поэтому спрашиваем его, а не держим в коде."""
+    global _discovered
+    if not _discovered and client is not None:
+        try:
+            names = []
+            for m in client.models.list():
+                n = (getattr(m, "name", "") or "").replace("models/", "")
+                acts = getattr(m, "supported_actions", None) or []
+                if "flash" in n and (not acts or "generateContent" in acts) and not any(
+                        x in n for x in ("image", "tts", "live", "audio", "embedding", "native")):
+                    names.append(n)
+            if names:
+                _discovered = [m for m in _MODELS if m in names] + sorted(
+                    (n for n in names if n not in _MODELS), reverse=True)
+                log.info(f"Gemini: доступные модели {_discovered}")
+        except Exception as e:
+            log.warning(f"Gemini: не удалось получить список моделей ({e}) — беру встроенный")
+    return _discovered or _MODELS
+
+
+_unusable: dict[str, str] = {}  # модель -> дата: недоступна этому ключу / не принимает запрос (404/400)
+
+
 def quota_exhausted_all() -> bool:
-    return all(_exhausted.get(m) == _today() for m in _MODELS)
+    """Все модели либо без лимита на сегодня, либо непригодны — и хотя бы у одной кончился лимит."""
+    ms, t = model_list(), _today()
+    return (any(_exhausted.get(m) == t for m in ms)
+            and all(_exhausted.get(m) == t or _unusable.get(m) == t for m in ms))
 
 
 class GeminiProvider(LLMProvider):
@@ -76,8 +107,8 @@ class GeminiProvider(LLMProvider):
             )
 
         last_err = None
-        for model in _MODELS:
-            if _exhausted.get(model) == _today():
+        for model in model_list(client):
+            if _exhausted.get(model) == _today() or _unusable.get(model) == _today():
                 continue
             cfg = dict(config_kwargs)
             for attempt in range(3):
@@ -100,10 +131,15 @@ class GeminiProvider(LLMProvider):
                         log.warning(f"Gemini: у {model} кончился дневной лимит — следующая модель")
                         break
                     if "404" in msg or "NOT_FOUND" in msg:
+                        _unusable[model] = _today()
                         break  # модели нет — следующая
-                    if "thinking" in msg.lower() and "thinking_config" in cfg:
-                        cfg.pop("thinking_config")  # модель не умеет управлять размышлением — без него
+                    if "thinking_config" in cfg and ("thinking" in msg.lower() or "INVALID_ARGUMENT" in msg):
+                        cfg.pop("thinking_config")  # модель не принимает настройку размышления — без неё
                         continue
+                    if "INVALID_ARGUMENT" in msg or "400" in msg:
+                        _unusable[model] = _today()
+                        log.warning(f"Gemini {model}: {msg[:150]} — следующая модель")
+                        break  # запрос этой модели не подходит — следующая модель
                     log.warning(f"Gemini {model} ошибка (попытка {attempt + 1}/3): {msg[:200]}")
                     if attempt < 2:
                         await asyncio.sleep(10 * (attempt + 1) if ("503" in msg or "429" in msg) else 3)

@@ -1,0 +1,27 @@
+# Секреты — никогда не коммитить
+.env
+.env.*
+!.env.example
+*.session
+
+# Данные, базы, логи
+data/
+logs/
+*.db
+*.sqlite
+*.log
+*.xlsx
+*.bak*
+*.patch
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ОС / редакторы
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

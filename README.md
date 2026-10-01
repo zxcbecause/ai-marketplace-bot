@@ -154,9 +154,6 @@ copy .env.example .env      # и заполнить ключи
 python main.py
 ```
 
-Подробная пошаговая инструкция: [docs/INSTALL.md](docs/INSTALL.md)
-Как пользоваться ботом и модулем документов: [docs/USAGE.md](docs/USAGE.md)
-
 ## Автор
 
 **Turdaly Dias** · [GitHub @zxcbecause](https://github.com/zxcbecause) · [Telegram @zxcbecause](https://t.me/zxcbecause)

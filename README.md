@@ -5,6 +5,7 @@
 **Telegram-бот, который делает за менеджера маркетплейса самую долгую и скучную работу.**
 Из одной строки «артикул + название» он создаёт готовую карточку товара на **Wildberries** и **Ozon**: с характеристиками, описанием, фото, инфографикой и документами соответствия.
 
+![CI](https://github.com/zxcbecause/ai-marketplace-bot/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![aiogram](https://img.shields.io/badge/aiogram-3-2CA5E0?logo=telegram&logoColor=white)
 ![Gemini](https://img.shields.io/badge/LLM-Gemini%20%C2%B7%20DeepSeek%20%C2%B7%20OpenAI-8E75B2)
@@ -160,6 +161,15 @@ pip install -r requirements.txt
 copy .env.example .env      # и заполнить ключи
 python main.py
 ```
+
+## Тесты
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Тесты покрывают нормализацию номеров деклараций и сертификатов ЕАЭС и определение статуса документа на карточке WB. В GitHub Actions они запускаются вместе с ruff при каждом пуше.
 
 ## Автор
 

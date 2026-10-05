@@ -1,0 +1,7 @@
+# Для тестов и CI: без тяжёлых ML-зависимостей бота
+pytest>=8.0
+ruff>=0.6
+pydantic-settings>=2.4
+python-dotenv>=1.0
+requests>=2.31
+openpyxl>=3.1

@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from config import settings  # noqa: E402
 from wb_catalog_snapshot import classify, status_ru  # noqa: E402
+from doc_numbers import key_num, norm_date, norm_type, wb_number  # noqa: E402
 
 BASE = "https://content-api.wildberries.ru"
 CH_DECL, CH_CERT, CH_START, CH_END = 15001135, 15001136, 15001137, 15001138
@@ -115,46 +116,6 @@ def errors_for(errs, vc: str, nm: int) -> str:
 
 
 # ---------- данные ----------
-def norm_type(t) -> str | None:
-    t = str(t or "").strip().lower()
-    if t.startswith("декл") or t in ("д", "decl", "declaration"):
-        return "decl"
-    if t.startswith("серт") or t in ("с", "c", "cert", "certificate"):
-        return "cert"
-    return None
-
-
-def norm_date(v) -> str | None:
-    if v in (None, ""):
-        return None
-    if isinstance(v, (datetime, date)):
-        return v.strftime("%d.%m.%Y")
-    s = str(v).strip()
-    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d.%m.%y"):
-        try:
-            return datetime.strptime(s[:10], fmt).strftime("%d.%m.%Y")
-        except ValueError:
-            pass
-    return None
-
-
-def wb_number(num: str, kind: str) -> str:
-    """Номер в виде, в котором WB находит его в реестре (README «ДЕКЛАРАЦИИ»):
-    BY-декларации — «ЕАЭС № BY/112 …» (со «№» и пробелом), BY-сертификаты — без «№»;
-    остальным добавляем «ЕАЭС », если его нет."""
-    n = re.sub(r"\s+", " ", str(num).strip())
-    body = re.sub(r"^ЕАЭС\s*(№|N)?\s*", "", n, flags=re.I)
-    if body.upper().startswith("BY"):
-        return f"ЕАЭС № {body}" if kind == "decl" else f"ЕАЭС {body}"
-    if kind == "decl" and re.match(r"RU\s*Д", body, re.I):  # так WB хранит RU-декларации: «ЕАЭС N RU Д-…»
-        return f"ЕАЭС N {body}"
-    return n if n.upper().startswith("ЕАЭС") else f"ЕАЭС {n}"
-
-
-def key_num(s: str) -> str:
-    return re.sub(r"[^0-9A-ZА-Я]", "", str(s).upper().replace("N", "").replace("№", ""))
-
-
 def read_table(path: Path) -> list[dict]:
     import openpyxl
     ws = openpyxl.load_workbook(path, data_only=True, read_only=True).worksheets[0]

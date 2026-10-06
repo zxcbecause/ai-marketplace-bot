@@ -38,6 +38,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from config import settings  # noqa: E402
 from wb_catalog_snapshot import classify, status_ru  # noqa: E402
 from doc_numbers import key_num, norm_date, norm_type, wb_number  # noqa: E402
+from wb_http import backoff_seconds  # noqa: E402
 
 BASE = "https://content-api.wildberries.ru"
 CH_DECL, CH_CERT, CH_START, CH_END = 15001135, 15001136, 15001137, 15001138
@@ -55,14 +56,18 @@ def wb(method, path, **kw):
         try:
             r = S.request(method, BASE + path, headers=H, timeout=60, **kw)
             if r.status_code == 429:
-                time.sleep(6 * (attempt + 1))
+                wait = backoff_seconds(attempt, r.headers)
+                # раньше скрипт ждал молча и со стороны выглядел зависшим
+                print(f"  WB: лимит запросов (429), жду {wait:.0f} с — попытка {attempt + 1}/8", flush=True)
+                time.sleep(wait)
                 continue
             if r.status_code == 401:
                 sys.exit("WB ответил 401: ключ WB_API_KEY в .env недействителен.")
             return r
         except requests.RequestException as e:
-            print(f"  сеть: {e}; повтор", flush=True)
-            time.sleep(5 * (attempt + 1))
+            wait = backoff_seconds(attempt, base=5.0, cap=60.0)
+            print(f"  сеть: {e}; повтор через {wait:.0f} с", flush=True)
+            time.sleep(wait)
     raise RuntimeError(f"WB не отвечает: {path}")
 
 

@@ -164,6 +164,21 @@ python main.py
 
 Чтобы на Windows бот поднимался сам после включения или перезагрузки ПК (без сна, с автозапуском и сторожем), один раз запустите `scripts\Настроить_автозапуск.bat`.
 
+## Запуск в Docker (Linux-сервер)
+
+```bash
+git clone https://github.com/zxcbecause/ai-marketplace-bot.git
+cd ai-marketplace-bot
+cp .env.example .env          # заполнить ключи
+docker compose up -d --build  # бот + собственный SearXNG
+docker compose logs -f bot
+```
+
+- Данные бота (база, логи, кэш моделей) лежат в `./data` на хосте и переживают пересборку.
+- Контейнер работает не от root, перезапускается сам (`restart: unless-stopped`), второй экземпляр бота запуститься не даст.
+- По умолчанию PyTorch собирается в CPU-версии. Для видеокарты NVIDIA: `docker compose build --build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu124` и раскомментировать блок `deploy` в `docker-compose.yml`.
+- Команды выключения ПК и самоудаления работают только на Windows; в контейнере `/restart_bot` просто перезапускает контейнер.
+
 ## Тесты
 
 ```bash

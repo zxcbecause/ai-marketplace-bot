@@ -1,0 +1,34 @@
+# Бот + собственный поисковик SearXNG.
+# Запуск:  cp .env.example .env  (заполнить ключи)  →  docker compose up -d --build
+services:
+  bot:
+    build: .
+    image: ai-marketplace-bot:latest
+    env_file: .env
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      DB_PATH: /app/data/bot.db
+      LOG_PATH: /app/data/bot.log
+      TZ: Asia/Almaty
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - searxng
+    restart: unless-stopped
+    # Видеокарта NVIDIA (нужен nvidia-container-toolkit и сборка с cu124, см. Dockerfile):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me}
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+    # наружу порт не открываем: бот ходит к нему по внутренней сети compose

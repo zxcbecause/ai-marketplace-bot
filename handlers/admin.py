@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import settings
+from utils.runtime_env import IS_WINDOWS, disk_root
 from database import db_connect
 from services.llm import set_llm
 
@@ -155,10 +156,11 @@ async def cmd_health(message: Message):
 
     # Диск
     try:
-        du = shutil.disk_usage("C:\\")
+        root = disk_root(settings.db_path)
+        du = shutil.disk_usage(root)
         free_gb = du.free / 1024**3
         icon = "✅" if free_gb > 20 else "⚠️"
-        lines.append(f"{icon} Диск C: свободно {free_gb:.0f} ГБ")
+        lines.append(f"{icon} Диск {root}: свободно {free_gb:.0f} ГБ")
     except Exception:
         pass
 
@@ -213,6 +215,9 @@ async def cmd_shutdown(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("Нет доступа.")
         return
+    if not IS_WINDOWS:
+        await message.answer("Команда работает только на Windows-ПК, не в контейнере.")
+        return
     subprocess.run(["shutdown", "/s", "/f", "/t", "30"])
     await message.answer(
         "ПК выключится через 30 секунд.\nОтменить: /cancelshutdown"
@@ -223,6 +228,9 @@ async def cmd_shutdown(message: Message):
 async def cmd_cancelshutdown(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer("Нет доступа.")
+        return
+    if not IS_WINDOWS:
+        await message.answer("Команда работает только на Windows-ПК, не в контейнере.")
         return
     subprocess.run(["shutdown", "/a"])
     await message.answer("Выключение отменено.")
@@ -239,9 +247,13 @@ async def cmd_restart_bot(message: Message):
         await message.answer("Нет доступа.")
         return
     await message.answer("Перезапускаюсь — вернусь секунд через 15-20.")
+    if not IS_WINDOWS:
+        # В Docker перезапуск делает сам контейнер (restart: unless-stopped).
+        await asyncio.sleep(0.5)
+        os._exit(0)
     subprocess.Popen(
         ["powershell", "-ExecutionPolicy", "Bypass", "-File", "start.ps1"],
-        cwd=r"C:\AI-Bot-V2",
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     await asyncio.sleep(0.5)

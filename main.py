@@ -1,17 +1,18 @@
 import asyncio
 import logging
-import msvcrt
 import ssl
 import os
 import sys
 import datetime
 
-# SSL патч — Avast перехватывает HTTPS
-ssl._create_default_https_context = ssl._create_unverified_context
-os.environ["PYTHONHTTPSVERIFY"] = "0"
+# SSL-патч нужен только на рабочем Windows-ПК, где антивирус (Avast) перехватывает HTTPS.
+# В Docker и на серверах проверка сертификатов остаётся включённой.
+if os.name == "nt" or os.environ.get("DISABLE_SSL_VERIFY") == "1":
+    ssl._create_default_https_context = ssl._create_unverified_context
+    os.environ["PYTHONHTTPSVERIFY"] = "0"
 
-import urllib3
-urllib3.disable_warnings()
+    import urllib3
+    urllib3.disable_warnings()
 
 import pytz
 from aiogram import Bot, Dispatcher
@@ -24,6 +25,7 @@ from database import init_db, db_connect
 from handlers import common, admin, card, photo, fix, wb, video, self_destruct
 from middleware.access import AccessMiddleware
 from utils.commands import set_commands
+from utils.runtime_env import IS_WINDOWS, acquire_singleton_lock
 
 # ── Hello Goodbye (Beatles) — гифка каждый день в 18:00, удаляется через 5 мин ──
 _HELLO_GIF_ID  = "CgACAgQAAxkBAAOvaf-vM-NbOOiHMqPc8l-yTI-o7kAAAi4IAAIDPHRTgi9DppbclpE7BA"
@@ -39,8 +41,8 @@ _HELLO_TEXT    = (
 # ── Защита от двойного запуска (03.08.2026) ────────────────────────────
 # Живой инцидент: два инстанса main.py одновременно боролись за getUpdates —
 # 104 подряд TelegramConflictError, ~2 минуты бот не принимал сообщения,
-# LLM-вызовы шли параллельно с обоих (риск задвоенной оплаты). msvcrt.locking
-# держит эксклюзивный лок, привязанный к файловому хендлу процесса — Windows
+# LLM-вызовы шли параллельно с обоих (риск задвоенной оплаты). Эксклюзивный лок
+# привязан к файловому хендлу процесса (msvcrt на Windows, flock на Linux) — ОС
 # освобождает его сама даже при форс-килле, поэтому протухший лок от
 # упавшего процесса не блокирует следующий legit-запуск.
 _lock_file_handle = None
@@ -49,19 +51,14 @@ _lock_file_handle = None
 def _acquire_singleton_lock() -> None:
     global _lock_file_handle
     lock_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.lock")
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-    _lock_file_handle = open(lock_path, "w")
-    try:
-        msvcrt.locking(_lock_file_handle.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
+    _lock_file_handle = acquire_singleton_lock(lock_path)
+    if _lock_file_handle is None:
         print(
             "Другой экземпляр бота уже запущен (data/bot.lock занят другим процессом). "
             "Завершаюсь, чтобы не конфликтовать за getUpdates.",
             file=sys.stderr,
         )
         sys.exit(1)
-    _lock_file_handle.write(str(os.getpid()))
-    _lock_file_handle.flush()
 
 
 async def _delete_after(bot, chat_id: int, message_id: int, delay: int = 300):
@@ -420,7 +417,8 @@ async def main():
     dp.include_router(fix.router)
     dp.include_router(wb.router)
     dp.include_router(video.router)
-    dp.include_router(self_destruct.router)
+    if IS_WINDOWS:  # самоудаление реализовано через PowerShell — только на Windows-ПК
+        dp.include_router(self_destruct.router)
 
     # 13.08.2026: раньше без try/except — при недоступном Telegram (ISP-блок)
     # это падало необработанным исключением и убивало весь процесс ДО

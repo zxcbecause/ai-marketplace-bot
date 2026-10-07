@@ -1,0 +1,13 @@
+# Минимальные настройки SearXNG для бота: JSON-ответы, без лимитера (доступ только из сети compose).
+use_default_settings: true
+
+server:
+  secret_key: "set-via-SEARXNG_SECRET-env"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json

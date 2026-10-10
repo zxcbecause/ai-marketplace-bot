@@ -3,7 +3,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message
 
 from config import settings
-from database import db_connect
+from database import UsersRepository, db_connect
 
 
 class AccessMiddleware(BaseMiddleware):
@@ -19,10 +19,7 @@ class AccessMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         async with db_connect() as db:
-            cursor = await db.execute(
-                "SELECT user_id FROM users WHERE user_id = ?", (user_id,)
-            )
-            exists = await cursor.fetchone()
+            exists = await UsersRepository(db).exists(user_id)
 
         if not exists:
             await event.answer("Нет доступа.")

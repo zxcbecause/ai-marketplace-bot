@@ -2,7 +2,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from database import db_connect
+from database import UsersRepository, db_connect
 from config import settings
 
 router = Router()
@@ -11,11 +11,7 @@ router = Router()
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     async with db_connect() as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-            (message.from_user.id,)
-        )
-        await db.commit()
+        await UsersRepository(db).add(message.from_user.id)
 
     await message.answer(
         "Привет! Я бот-помощник для заполнения карточек товаров на WB и Ozon.\n\n"

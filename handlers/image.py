@@ -10,7 +10,7 @@ from aiogram import Router, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, PhotoSize
 
-from database import db_connect
+from database import UsersRepository, db_connect
 from services.llm import get_llm
 from services.card import (
     detect_category, get_priority_chars, build_context_from_search,
@@ -45,21 +45,12 @@ USE_VISION = True
 
 async def _get_user_style(user_id: int) -> str:
     async with db_connect() as db:
-        async with db.execute(
-            "SELECT infographic_style FROM users WHERE user_id = ?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        if row and row[0]:
-            return row[0]
-    return "default"
+        return await UsersRepository(db).get_style(user_id)
 
 
 async def _set_user_style(user_id: int, style: str) -> None:
     async with db_connect() as db:
-        await db.execute(
-            "UPDATE users SET infographic_style = ? WHERE user_id = ?", (style, user_id)
-        )
-        await db.commit()
+        await UsersRepository(db).set_style(user_id, style)
 
 
 

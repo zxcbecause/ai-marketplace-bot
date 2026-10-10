@@ -21,7 +21,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BufferedInputFile
 
 from config import settings
-from database import init_db, db_connect
+from database import UsersRepository, db_connect, init_db
 from handlers import common, admin, card, photo, fix, wb, video, self_destruct
 from middleware.access import AccessMiddleware
 from utils.commands import set_commands
@@ -166,9 +166,7 @@ async def _send_hello_goodbye(bot):
     """Отправляет гифку всем пользователям, удаляет через 5 минут."""
     log = logging.getLogger("scheduler")
     async with db_connect() as db:
-        db.row_factory = __import__("aiosqlite").Row
-        cur = await db.execute("SELECT user_id FROM users")
-        users = [r["user_id"] for r in await cur.fetchall()]
+        users = await UsersRepository(db).all_ids()
     if not users:
         log.info("hello_goodbye: нет пользователей")
         return

@@ -8,7 +8,7 @@ from aiogram.types import Message
 
 from config import settings
 from utils.runtime_env import IS_WINDOWS, disk_root
-from database import db_connect
+from database import CostsRepository, UsersRepository, db_connect
 from services.llm import set_llm
 
 router = Router()
@@ -25,12 +25,7 @@ async def cmd_model(message: Message):
     args = message.text.split()[1:]
     if not args:
         async with db_connect() as db:
-            cursor = await db.execute(
-                "SELECT llm_model FROM users WHERE user_id = ?",
-                (message.from_user.id,)
-            )
-            row = await cursor.fetchone()
-        current = row[0] if row else "deepseek"
+            current = await UsersRepository(db).get_llm_model(message.from_user.id)
         await message.answer(
             f"Текущая модель: <b>{current}</b>\n\n"
             f"Доступные: {', '.join(ALLOWED_MODELS)}\n"
@@ -59,10 +54,7 @@ async def cmd_adduser(message: Message):
 
     new_id = int(args[0])
     async with db_connect() as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)", (new_id,)
-        )
-        await db.commit()
+        await UsersRepository(db).add(new_id)
     await message.answer(f"Пользователь {new_id} добавлен.")
 
 
@@ -78,8 +70,7 @@ async def cmd_removeuser(message: Message):
 
     rm_id = int(args[0])
     async with db_connect() as db:
-        await db.execute("DELETE FROM users WHERE user_id = ?", (rm_id,))
-        await db.commit()
+        await UsersRepository(db).remove(rm_id)
     await message.answer(f"Пользователь {rm_id} удалён.")
 
 
@@ -89,8 +80,7 @@ async def cmd_users(message: Message):
         await message.answer("Нет доступа.")
         return
     async with db_connect() as db:
-        cursor = await db.execute("SELECT user_id, llm_model FROM users ORDER BY created_at")
-        rows = await cursor.fetchall()
+        rows = await UsersRepository(db).list_all()
 
     if not rows:
         await message.answer("Список пользователей пуст.")
@@ -174,39 +164,23 @@ async def cmd_costs(message: Message):
         await message.answer("Нет доступа.")
         return
 
-    periods = [
-        ("Сегодня", "date(created_at) = date('now')"),
-        ("Вчера", "date(created_at) = date('now', '-1 day')"),
-        ("7 дней", "created_at >= datetime('now', '-7 days')"),
-        ("30 дней", "created_at >= datetime('now', '-30 days')"),
-        ("Всего", "1=1"),
-    ]
-    lines = ["<b>Траты (LLM):</b>"]
     async with db_connect() as db:
-        for label, cond in periods:
-            cursor = await db.execute(
-                f"SELECT provider, COUNT(*), SUM(usd) FROM costs "
-                f"WHERE {cond} GROUP BY provider"
-            )
-            rows = await cursor.fetchall()
-            if not rows:
-                lines.append(f"\n<b>{label}:</b> —")
-                continue
-            total = sum(r[2] or 0 for r in rows)
-            parts = ", ".join(f"{r[0]}: ${r[2] or 0:.2f} ({r[1]})" for r in rows)
-            lines.append(f"\n<b>{label}:</b> ${total:.2f}\n  {parts}")
+        repo = CostsRepository(db)
+        summary = await repo.summary()
+        top = await repo.top_operations(days=7, limit=5)
 
-        # Топ-5 операций за 7 дней
-        cursor = await db.execute(
-            "SELECT operation, COUNT(*), SUM(usd) FROM costs "
-            "WHERE created_at >= datetime('now', '-7 days') "
-            "GROUP BY operation ORDER BY SUM(usd) DESC LIMIT 5"
-        )
-        top = await cursor.fetchall()
+    lines = ["<b>Траты (LLM):</b>"]
+    for label, rows in summary:
+        if not rows:
+            lines.append(f"\n<b>{label}:</b> —")
+            continue
+        total = sum(r.usd for r in rows)
+        parts = ", ".join(f"{r.provider}: ${r.usd:.2f} ({r.calls})" for r in rows)
+        lines.append(f"\n<b>{label}:</b> ${total:.2f}\n  {parts}")
     if top:
         lines.append("\n<b>Топ операций (7 дней):</b>")
-        for op, cnt, usd in top:
-            lines.append(f"  {op}: ${usd or 0:.2f} ({cnt})")
+        for op in top:
+            lines.append(f"  {op.operation}: ${op.usd:.2f} ({op.calls})")
     await message.answer("\n".join(lines))
 
 

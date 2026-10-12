@@ -228,3 +228,46 @@ class WbStatsRepository:
         return await self._rows(
             "article, subject_id, subject_name, product_name",
             "wb_tnved_misses", WORK_WINDOW, now, 2)
+
+
+class SearchCacheRepository:
+    """Кэш ответов поисковых движков. Возраст записи считает сама SQLite:
+    created_at и datetime('now') оба в UTC, часовой пояс ПК не влияет."""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def get(self, key: str, ttl_seconds: int, now: str = "now") -> tuple[str, int] | None:
+        """(payload, сколько секунд записи ещё жить) или None, если записи нет или она устарела."""
+        cur = await self.db.execute(
+            """SELECT payload,
+                      ? - (CAST(strftime('%s', ?) AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER))
+               FROM search_cache
+               WHERE cache_key = ? AND created_at > datetime(?, ?)""",
+            (ttl_seconds, now, key, now, f"-{int(ttl_seconds)} seconds"),
+        )
+        row = await cur.fetchone()
+        return (row[0], int(row[1])) if row else None
+
+    async def put(self, key: str, payload: str, now: str = "now") -> None:
+        await self.db.execute(
+            """INSERT INTO search_cache (cache_key, payload, created_at)
+               VALUES (?, ?, datetime(?))
+               ON CONFLICT(cache_key) DO UPDATE SET
+                   payload = excluded.payload, created_at = excluded.created_at""",
+            (key, payload, now),
+        )
+        await self.db.commit()
+
+    async def purge_expired(self, ttl_seconds: int, now: str = "now") -> int:
+        """Удаляет устаревшие записи, возвращает их количество."""
+        cur = await self.db.execute(
+            "DELETE FROM search_cache WHERE created_at <= datetime(?, ?)",
+            (now, f"-{int(ttl_seconds)} seconds"),
+        )
+        await self.db.commit()
+        return cur.rowcount
+
+    async def count(self) -> int:
+        cur = await self.db.execute("SELECT COUNT(*) FROM search_cache")
+        return (await cur.fetchone())[0]

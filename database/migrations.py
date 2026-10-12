@@ -176,6 +176,9 @@ MIGRATIONS: tuple[Migration, ...] = (
         "CREATE INDEX IF NOT EXISTS idx_costs_created_at ON costs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_costs_user_id ON costs(user_id)",
     )),
+    Migration(3, "index for search cache cleanup", (
+        "CREATE INDEX IF NOT EXISTS idx_search_cache_created_at ON search_cache(created_at)",
+    )),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

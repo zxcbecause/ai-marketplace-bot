@@ -15,6 +15,7 @@ import logging
 import re
 
 from database.db import db_connect
+from database.repositories import TnvedRepository
 
 log = logging.getLogger(__name__)
 
@@ -29,42 +30,41 @@ _TNVED_CLASSIFIER_DOMAINS = ["kodtnved.ru", "ifcg.ru", "classifikators.ru", "tws
 # живьём 10.08.2026, поиск по одному только слитному тексту не находил ничего
 # на страницах, где код был буквально в заголовке и адресе.
 _TNVED_CODE_RE = re.compile(r"\b\d{10}\b")
-_TNVED_GROUPED_RE = re.compile(r"\b(\d{4})[\s-](\d{2})[\s-]?(\d{2})[\s-]?(\d{2})\b")
+# Код, записанный группами. Официальная запись ЕАЭС — 4-2-3-1 ("8518 10 960 0"),
+# на сайтах встречается и 4-2-2-2 ("8518 10 96 00") или 4-2-4; между группами
+# часто стоит неразрывный пробел. Дефис как разделитель не принимаем: с ним
+# за код сходили даты вида "2026-10-13 15:20".
+_WS = r"[ \u00a0\u202f]"
+_TNVED_GROUPED_RE = re.compile(
+    rf"(?<!\w)(\d{{4}}){_WS}(\d{{2}}){_WS}"
+    rf"(\d{{3}}{_WS}\d|\d{{2}}{_WS}\d{{2}}|\d{{4}})(?!\w)"
+)
 _TNVED_URL_CODE_RE = re.compile(r"/(\d{10})(?:[/?]|$)")
 
 
 def _extract_tnved_codes(url: str, title: str, text: str) -> set[str]:
-    """Коды, реально встречающиеся у страницы — слитно в тексте, группами
-    через пробел/дефис (офиц. запись) в тексте/заголовке, или в самом URL."""
+    """Коды, реально встречающиеся у страницы — слитно в тексте,
+    группами через пробелы (офиц. запись) в тексте/заголовке, или в самом URL."""
     codes: set[str] = set(_TNVED_CODE_RE.findall(text))
-    codes |= {"".join(m) for m in _TNVED_GROUPED_RE.findall(text + " " + title)}
+    for head, sub, tail in _TNVED_GROUPED_RE.findall(text + "\n" + title):
+        codes.add(head + sub + re.sub(_WS, "", tail))
     codes |= set(_TNVED_URL_CODE_RE.findall(url))
-    return codes
+    # Группы ТН ВЭД — 01..97, группа 77 зарезервирована и не используется.
+    # Отсекает случайные 10-значные числа, которые кодом быть не могут.
+    return {c for c in codes if 1 <= int(c[:2]) <= 97 and c[:2] != "77"}
 
 
 async def get_tnved(category_key: str) -> str | None:
     """Код ТН ВЭД для профиля категории из базы. None — записи нет вообще
     (вызывающий код сам решает, откатываться ли на CategoryProfile.tnved)."""
     async with db_connect() as db:
-        cur = await db.execute(
-            "SELECT tnved FROM tnved_codes WHERE category_key = ?", (category_key,)
-        )
-        row = await cur.fetchone()
-        return row[0] if row else None
+        return await TnvedRepository(db).get_ozon(category_key)
 
 
 async def set_tnved(category_key: str, tnved: str, note: str = "") -> None:
     """Записывает/обновляет код для категории — правки по факту находок."""
     async with db_connect() as db:
-        await db.execute(
-            """INSERT INTO tnved_codes (category_key, tnved, note, updated_at)
-               VALUES (?, ?, ?, datetime('now'))
-               ON CONFLICT(category_key) DO UPDATE SET
-                   tnved = excluded.tnved, note = excluded.note,
-                   updated_at = excluded.updated_at""",
-            (category_key, tnved, note),
-        )
-        await db.commit()
+        await TnvedRepository(db).set_ozon(category_key, tnved, note)
     log.info(f"tnved_codes: {category_key!r} -> {tnved!r} ({note})")
 
 
@@ -73,26 +73,14 @@ async def get_wb_tnved(subject_id: int) -> str | None:
     официальный справочник content/v2/directory/tnved недоступен или пуст
     для этой категории). None — записи нет."""
     async with db_connect() as db:
-        cur = await db.execute(
-            "SELECT tnved FROM wb_tnved_codes WHERE subject_id = ?", (subject_id,)
-        )
-        row = await cur.fetchone()
-        return row[0] if row else None
+        return await TnvedRepository(db).get_wb(subject_id)
 
 
 async def set_wb_tnved(subject_id: int, subject_name: str, tnved: str, note: str = "") -> None:
     """Записывает/обновляет код для subjectID WB — накапливается по факту
     каждого успешного резолва через официальный справочник."""
     async with db_connect() as db:
-        await db.execute(
-            """INSERT INTO wb_tnved_codes (subject_id, subject_name, tnved, note, updated_at)
-               VALUES (?, ?, ?, ?, datetime('now'))
-               ON CONFLICT(subject_id) DO UPDATE SET
-                   subject_name = excluded.subject_name, tnved = excluded.tnved,
-                   note = excluded.note, updated_at = excluded.updated_at""",
-            (subject_id, subject_name, tnved, note),
-        )
-        await db.commit()
+        await TnvedRepository(db).set_wb(subject_id, subject_name, tnved, note)
     log.info(f"wb_tnved_codes: {subject_id} ({subject_name!r}) -> {tnved!r} ({note})")
 
 
@@ -104,13 +92,7 @@ async def get_wb_tnved_candidates(subject_id: int) -> list[dict]:
     техническим признакам (напр. рюкзаки 4202 91/92 по материалу поверхности,
     кроссовки — десятки кодов по материалу верха)."""
     async with db_connect() as db:
-        cur = await db.execute(
-            "SELECT tnved, description FROM wb_tnved_candidates "
-            "WHERE subject_id = ? ORDER BY tnved",
-            (subject_id,),
-        )
-        rows = await cur.fetchall()
-        return [{"tnved": r[0], "description": r[1]} for r in rows]
+        return await TnvedRepository(db).get_wb_candidates(subject_id)
 
 
 async def set_wb_tnved_candidates(
@@ -121,19 +103,7 @@ async def set_wb_tnved_candidates(
     subjectID WB. Апсерт по (subject_id, tnved) — повторный сид той же
     категории обновляет описания, не плодит дублей."""
     async with db_connect() as db:
-        for code, description in candidates:
-            await db.execute(
-                """INSERT INTO wb_tnved_candidates
-                       (subject_id, tnved, description, subject_name, source, updated_at)
-                   VALUES (?, ?, ?, ?, ?, datetime('now'))
-                   ON CONFLICT(subject_id, tnved) DO UPDATE SET
-                       description = excluded.description,
-                       subject_name = excluded.subject_name,
-                       source = excluded.source,
-                       updated_at = excluded.updated_at""",
-                (subject_id, code, description, subject_name, source),
-            )
-        await db.commit()
+        await TnvedRepository(db).set_wb_candidates(subject_id, subject_name, candidates, source)
     log.info(f"wb_tnved_candidates: {subject_id} ({subject_name!r}) — "
              f"{len(candidates)} кандидатов ({source})")
 
@@ -297,20 +267,11 @@ async def seed_from_profiles() -> int:
     профилей, у которых ещё нет строки в базе. Возвращает число добавленных."""
     from services.ozon_categories import PROFILES
 
-    added = 0
     async with db_connect() as db:
-        for key, profile in PROFILES.items():
-            cur = await db.execute(
-                "SELECT 1 FROM tnved_codes WHERE category_key = ?", (key,)
-            )
-            if await cur.fetchone():
-                continue
-            await db.execute(
-                "INSERT INTO tnved_codes (category_key, tnved, note) VALUES (?, ?, ?)",
-                (key, profile.tnved, "сид из CategoryProfile.tnved"),
-            )
-            added += 1
-        await db.commit()
+        added = await TnvedRepository(db).seed_ozon(
+            {key: profile.tnved for key, profile in PROFILES.items()},
+            note="сид из CategoryProfile.tnved",
+        )
     if added:
         log.info(f"tnved_codes: засеяно {added} категорий из PROFILES")
     return added

@@ -23,14 +23,14 @@ import html
 import json
 import logging
 import re
-import statistics
 import time
 from pathlib import Path
 
 import requests
 
 from config import settings
-from database.db import db_connect
+from services.dims_history import get_dims_median as _get_dims_median
+from services.dims_history import record_dims as _record_dims_history
 from services.llm import LLMProvider
 from services.card.generator import (
     generate_full_card, _wb_sanitize_text, _normalize_spacing, truncate_title,
@@ -1158,42 +1158,6 @@ _SIZE_DEFAULTS = {
     "monitor": (65, 42, 15, 5.5),
     "medium": (25, 18, 10, 1.0),
 }
-
-
-async def _record_dims_history(subject_id: int, length: float, width: float,
-                                height: float, weight: float, source: str = "") -> None:
-    """Копит РЕАЛЬНО найденные веб-поиском габариты по категории — база для
-    самообучающейся медианы в _build_dimensions (01.09.2026, см. живой баг
-    с мониторами: 25×18×10/1кг статичного дефолта на 27" монитор). Пишем
-    только полный набор (все 4 значения сразу из одного источника) —
-    иначе медиана могла бы смешать длину одного товара с высотой другого."""
-    try:
-        async with db_connect() as db:
-            await db.execute(
-                """INSERT INTO wb_dims_history (subject_id, length, width, height, weight, source)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (subject_id, length, width, height, weight, source),
-            )
-            await db.commit()
-    except Exception as e:
-        log.warning(f"wb_dims_history: не записалось (subject {subject_id}): {e}")
-
-
-async def _get_dims_median(subject_id: int) -> tuple[float, float, float, float] | None:
-    """Медиана накопленных реальных габаритов для категории. None — истории
-    ещё нет (холодный старт, вызывающий код откатывается на статичный
-    small/medium/large/monitor дефолт)."""
-    async with db_connect() as db:
-        cur = await db.execute(
-            "SELECT length, width, height, weight FROM wb_dims_history WHERE subject_id = ?",
-            (subject_id,),
-        )
-        rows = await cur.fetchall()
-    if not rows:
-        return None
-    lens, wids, heis, wts = zip(*rows)
-    return (statistics.median(lens), statistics.median(wids),
-            statistics.median(heis), statistics.median(wts))
 
 
 async def _build_dimensions(pack_values: dict[str, str], subject_id: int = 0) -> dict:

@@ -271,3 +271,104 @@ class SearchCacheRepository:
     async def count(self) -> int:
         cur = await self.db.execute("SELECT COUNT(*) FROM search_cache")
         return (await cur.fetchone())[0]
+
+
+class TnvedRepository:
+    """Своя библиотека кодов ТН ВЭД: по профилям Ozon, по subjectID WB и кандидаты."""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def get_ozon(self, category_key: str) -> str | None:
+        cur = await self.db.execute(
+            "SELECT tnved FROM tnved_codes WHERE category_key = ?", (category_key,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+    async def set_ozon(self, category_key: str, tnved: str, note: str = "") -> None:
+        await self.db.execute(
+            """INSERT INTO tnved_codes (category_key, tnved, note, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(category_key) DO UPDATE SET
+                   tnved = excluded.tnved, note = excluded.note,
+                   updated_at = excluded.updated_at""",
+            (category_key, tnved, note),
+        )
+        await self.db.commit()
+
+    async def seed_ozon(self, codes: dict[str, str], note: str) -> int:
+        """Добавляет коды для категорий, которых ещё нет; существующие не трогает.
+        Возвращает число добавленных."""
+        before = self.db.total_changes
+        await self.db.executemany(
+            "INSERT OR IGNORE INTO tnved_codes (category_key, tnved, note) VALUES (?, ?, ?)",
+            [(key, code, note) for key, code in codes.items()],
+        )
+        await self.db.commit()
+        return self.db.total_changes - before
+
+    async def get_wb(self, subject_id: int) -> str | None:
+        cur = await self.db.execute(
+            "SELECT tnved FROM wb_tnved_codes WHERE subject_id = ?", (subject_id,))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+    async def set_wb(self, subject_id: int, subject_name: str, tnved: str, note: str = "") -> None:
+        await self.db.execute(
+            """INSERT INTO wb_tnved_codes (subject_id, subject_name, tnved, note, updated_at)
+               VALUES (?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(subject_id) DO UPDATE SET
+                   subject_name = excluded.subject_name, tnved = excluded.tnved,
+                   note = excluded.note, updated_at = excluded.updated_at""",
+            (subject_id, subject_name, tnved, note),
+        )
+        await self.db.commit()
+
+    async def get_wb_candidates(self, subject_id: int) -> list[dict]:
+        cur = await self.db.execute(
+            "SELECT tnved, description FROM wb_tnved_candidates "
+            "WHERE subject_id = ? ORDER BY tnved",
+            (subject_id,),
+        )
+        return [{"tnved": r[0], "description": r[1]} for r in await cur.fetchall()]
+
+    async def set_wb_candidates(self, subject_id: int, subject_name: str,
+                                candidates: list[tuple[str, str]], source: str = "") -> None:
+        """Апсерт по (subject_id, tnved): повторный сид обновляет описания, не плодит дубли."""
+        await self.db.executemany(
+            """INSERT INTO wb_tnved_candidates
+                   (subject_id, tnved, description, subject_name, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(subject_id, tnved) DO UPDATE SET
+                   description = excluded.description,
+                   subject_name = excluded.subject_name,
+                   source = excluded.source,
+                   updated_at = excluded.updated_at""",
+            [(subject_id, code, desc, subject_name, source) for code, desc in candidates],
+        )
+        await self.db.commit()
+
+
+class DimsHistoryRepository:
+    """Реальные габариты упаковки, найденные для карточек, — по категориям WB."""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def add(self, subject_id: int, length: float, width: float,
+                  height: float, weight: float, source: str = "") -> None:
+        await self.db.execute(
+            """INSERT INTO wb_dims_history (subject_id, length, width, height, weight, source)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (subject_id, length, width, height, weight, source),
+        )
+        await self.db.commit()
+
+    async def recent(self, subject_id: int, limit: int = 50) -> list[tuple[float, float, float, float]]:
+        """Последние `limit` образцов категории, новые первыми."""
+        cur = await self.db.execute(
+            """SELECT length, width, height, weight FROM wb_dims_history
+               WHERE subject_id = ? ORDER BY id DESC LIMIT ?""",
+            (subject_id, limit),
+        )
+        return [tuple(r) for r in await cur.fetchall()]
